@@ -35,26 +35,6 @@ function loadDevelopersFromEnv() {
     }
   }
   
-  // Fallback to hardcoded developers if no env vars are set
-  if (Object.keys(developers).length === 0) {
-    console.log('⚠️  No developer environment variables found, using default mappings');
-    developers.alice = {
-      slack_app: 'https://alice-slack-app.ngrok-free.app',
-      slack_oauth: 'https://alice-slack-oauth.ngrok-free.app',
-      google_sheets: 'https://alice-google-sheets.ngrok-free.app'
-    };
-    developers.bob = {
-      slack_app: 'https://bob-slack-app.ngrok-free.app',
-      slack_oauth: 'https://bob-slack-oauth.ngrok-free.app',
-      google_sheets: 'https://bob-google-sheets.ngrok-free.app'
-    };
-    developers.charlie = {
-      slack_app: 'https://charlie-slack-app.ngrok-free.app',
-      slack_oauth: 'https://charlie-slack-oauth.ngrok-free.app',
-      google_sheets: 'https://charlie-google-sheets.ngrok-free.app'
-    };
-  }
-  
   return developers;
 }
 
@@ -62,7 +42,7 @@ function loadDevelopersFromEnv() {
 const developers = loadDevelopersFromEnv();
 
 // Default developer if none specified
-const DEFAULT_DEVELOPER = process.env.DEFAULT_DEVELOPER || 'alice';
+const DEFAULT_DEVELOPER = process.env.DEFAULT_DEVELOPER;
 
 // Helper function to get target URL for developer and service
 function getTargetUrl(developer, service) {

@@ -10,9 +10,10 @@ services:
         value: production
       - key: LOAD_BALANCER_STRATEGY
         value: round_robin
-      - key: DEVELOPER_ALICE_SLACK_APP
-        value: https://dc8f0e2fec13.ngrok-free.app
-      - key: DEVELOPER_ALICE_SLACK_OAUTH
-        value: https://e5890ed46820.ngrok-free.app
-      - key: DEVELOPER_ALICE_GOOGLE_SHEETS
-        value: https://6cb507d735a3.ngrok-free.app 
+      # Vedant's development environment
+      - key: DEVELOPER_VEDANT_SLACK_APP
+        value: https://67ccbee1763c.ngrok-free.app
+      - key: DEVELOPER_VEDANT_SLACK_OAUTH
+        value: https://48cd19dfe492.ngrok-free.app
+      - key: DEVELOPER_VEDANT_GOOGLE_SHEETS
+        value: https://a2920615db6e.ngrok-free.app 
