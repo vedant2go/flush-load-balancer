@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: flush-load-balancer
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run load-balancer
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOAD_BALANCER_STRATEGY
+        value: round_robin
+      - key: DEVELOPER_ALICE_SLACK_APP
+        value: https://dc8f0e2fec13.ngrok-free.app
+      - key: DEVELOPER_ALICE_SLACK_OAUTH
+        value: https://e5890ed46820.ngrok-free.app
+      - key: DEVELOPER_ALICE_GOOGLE_SHEETS
+        value: https://6cb507d735a3.ngrok-free.app 
