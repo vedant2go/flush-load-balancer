@@ -174,54 +174,25 @@ function getTargetUrl(developer, service) {
   return developerConfig[service] || null;
 }
 
-// Helper function to create proxy middleware with retry logic
-function createSlackProxyWithRetry(targetUrl) {
-  const https = require('https');
-  
-  const baseProxy = createProxyMiddleware({
+// Simple, fast proxy function without retry complexity
+function createSlackProxy(targetUrl) {
+  return createProxyMiddleware({
     target: targetUrl,
     changeOrigin: true,
     secure: true,
-    // Optimize for Slack's 3-second timeout requirement
-    agent: new https.Agent({
-      keepAlive: false,        // Disable keep-alive completely
-      maxSockets: 10,          // Allow more concurrent connections for speed
-      timeout: 2000,           // Very short socket timeout (2 seconds)
-      rejectUnauthorized: true, // Verify SSL certificates
-      // Force HTTP/1.1 by disabling HTTP/2
-      maxVersion: 'TLSv1.3',
-      minVersion: 'TLSv1.2'
-    }),
-    // Fast timeouts to meet Slack's 3-second requirement
-    timeout: 2500,           // 2.5 seconds per attempt (leave 0.5s for processing)
-    proxyTimeout: 2500,      // 2.5 seconds per attempt
-    // Configure connection handling
-    followRedirects: false,   // Disable redirects to prevent delays
-    ws: false,               // Disable websockets
-    xfwd: false,             // Disable X-Forwarded headers that might confuse ngrok
+    // Minimal configuration for maximum speed
+    timeout: 2800,          // Just under 3 seconds
+    proxyTimeout: 2800,     // Just under 3 seconds
+    followRedirects: false,
+    ws: false,
     onProxyReq: (proxyReq, req, res) => {
-      console.log(`[PROXY_REQ] Fast attempt ${req.retryAttempt || 1}/2: ${targetUrl}${req.url}`);
+      console.log(`[PROXY] → ${targetUrl}${req.url}`);
       
-      // Force HTTP/1.1 explicitly
-      proxyReq.setHeader('Connection', 'close');
-      proxyReq.setHeader('Cache-Control', 'no-cache');
-      
-      // Add ngrok bypass header for free accounts
+      // Essential headers only
       proxyReq.setHeader('ngrok-skip-browser-warning', 'true');
+      proxyReq.setHeader('Connection', 'close');
       
-      // Use original User-Agent or set a clear one
-      const userAgent = req.get('User-Agent') || 'Flush-Load-Balancer/1.0';
-      proxyReq.setHeader('User-Agent', userAgent);
-      
-      // Remove any problematic headers that might cause HTTP/2 issues
-      proxyReq.removeHeader('upgrade');
-      proxyReq.removeHeader('http2-settings');
-      proxyReq.removeHeader(':method');
-      proxyReq.removeHeader(':path');
-      proxyReq.removeHeader(':scheme');
-      proxyReq.removeHeader(':authority');
-      
-      // Preserve critical Slack headers
+      // Preserve Slack headers
       if (req.get('X-Slack-Signature')) {
         proxyReq.setHeader('X-Slack-Signature', req.get('X-Slack-Signature'));
       }
@@ -229,101 +200,37 @@ function createSlackProxyWithRetry(targetUrl) {
         proxyReq.setHeader('X-Slack-Request-Timestamp', req.get('X-Slack-Request-Timestamp'));
       }
       
-      // Log timing and debug info
       req.startTime = Date.now();
-      console.log(`[PROXY_REQ] Headers: UA="${userAgent}", ngrok-skip="${proxyReq.getHeader('ngrok-skip-browser-warning')}"`);
     },
     onProxyRes: (proxyRes, req, res) => {
       const duration = Date.now() - (req.startTime || Date.now());
-      console.log(`[PROXY_SUCCESS] ✅ ${proxyRes.statusCode} in ${duration}ms (attempt ${req.retryAttempt || 1})`);
+      console.log(`[PROXY] ✅ ${proxyRes.statusCode} in ${duration}ms`);
       
-      // Update request count
+      // Update stats
       if (req.selectedDeveloper) {
         requestCounts[req.selectedDeveloper] = (requestCounts[req.selectedDeveloper] || 0) + 1;
-        // Mark as healthy on successful response
         healthStatus[req.selectedDeveloper] = 'healthy';
-        // Reset failure counter on success
-        const failureKey = `${req.selectedDeveloper}_failures`;
-        if (global[failureKey]) {
-          console.log(`[HEALTH_CHECK] Reset failure counter for ${req.selectedDeveloper}`);
-          global[failureKey] = 0;
-        }
       }
     },
     onError: (err, req, res) => {
       const duration = Date.now() - (req.startTime || Date.now());
-      const attempt = req.retryAttempt || 1;
-      console.error(`[PROXY_ERROR] ❌ Attempt ${attempt}/2 - ${err.code}: ${err.message} (${duration}ms)`);
+      console.error(`[PROXY] ❌ ${err.code}: ${err.message} (${duration}ms)`);
       
-      // Check if this is a retryable error and we have time for a retry
-      const isRetryableError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'EPIPE' || err.code === 'ENOTFOUND' || err.code === 'ECONNABORTED';
-      const totalTimeElapsed = Date.now() - req.startTime;
-      const hasTimeForRetry = totalTimeElapsed < 1500; // Only retry if we have at least 1.5s left
-      
-      if (isRetryableError && attempt < 2 && hasTimeForRetry && !res.headersSent) {
-        console.log(`[RETRY] 🔄 Quick retry (${totalTimeElapsed}ms elapsed, ${3000 - totalTimeElapsed}ms remaining)`);
-        req.retryAttempt = attempt + 1;
-        
-        // Immediate retry - no delay for speed
-        setImmediate(() => {
-          console.log(`[RETRY] Starting retry attempt ${attempt + 1}`);
-          const retryProxy = createSlackProxyWithRetry(targetUrl);
-          retryProxy(req, res);
-        });
-        return;
-      }
-      
-      // Handle permanent failure or no time left
-      const reason = !hasTimeForRetry ? 'no time remaining' : 'max retries reached';
-      console.error(`[PROXY_ERROR] ❌ Failed after ${attempt} attempts (${reason})`);
-      
-      // More nuanced health checking
+      // Mark as unhealthy
       if (req.selectedDeveloper) {
-        if (isRetryableError) {
-          const failureKey = `${req.selectedDeveloper}_failures`;
-          global[failureKey] = (global[failureKey] || 0) + 1;
-          
-          console.log(`[HEALTH_CHECK] Connection issue with ${req.selectedDeveloper} (${global[failureKey]}/3 failures): ${err.code}`);
-          
-          if (global[failureKey] >= 3) {
-            healthStatus[req.selectedDeveloper] = 'unhealthy';
-            console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy after ${global[failureKey]} connection failures`);
-          }
-        } else if (err.code === 'ECONNREFUSED') {
-          healthStatus[req.selectedDeveloper] = 'unhealthy';
-          console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy due to ${err.code}`);
-        }
+        healthStatus[req.selectedDeveloper] = 'unhealthy';
       }
 
-      // Return appropriate error response
       if (!res.headersSent) {
-        const isTimeoutError = err.code === 'ETIMEDOUT' || duration > 2000;
-        const isConnectionError = err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || err.code === 'ECONNABORTED';
-        const statusCode = isTimeoutError ? 504 : (isConnectionError ? 502 : 500);
-        const errorType = isTimeoutError ? 'Gateway Timeout' : (isConnectionError ? 'Bad Gateway' : 'Internal Server Error');
-        
-        res.status(statusCode).json({ 
-          error: errorType,
-          message: `Backend service ${isTimeoutError ? 'timed out' : isConnectionError ? 'connection failed' : 'error'} after ${attempt} attempts`,
-          developer: req.selectedDeveloper,
-          service: req.service,
-          target: targetUrl,
+        res.status(502).json({ 
+          error: 'Bad Gateway',
+          message: 'Backend connection failed',
           duration_ms: duration,
-          error_code: err.code,
-          error_message: err.message,
-          attempts: attempt,
-          slack_timeout_note: 'Optimized for Slack 3-second requirement'
+          error_code: err.code
         });
       }
     }
   });
-  
-  return baseProxy;
-}
-
-// Helper function to create proxy middleware (keeping old name for compatibility)
-function createSlackProxy(targetUrl) {
-  return createSlackProxyWithRetry(targetUrl);
 }
 
 // Helper function to select developer using load balancer
