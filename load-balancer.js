@@ -184,6 +184,8 @@ function createSlackProxy(targetUrl) {
     proxyTimeout: 30000,
     onProxyReq: (proxyReq, req, res) => {
       console.log(`Load balancing to: ${targetUrl}${req.url}`);
+      // Add ngrok bypass header for free accounts
+      proxyReq.setHeader('ngrok-skip-browser-warning', 'true');
     },
     onProxyRes: (proxyRes, req, res) => {
       console.log(`Response from ${targetUrl}: ${proxyRes.statusCode}`);
