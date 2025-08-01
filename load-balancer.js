@@ -176,36 +176,50 @@ function getTargetUrl(developer, service) {
 
 // Helper function to create proxy middleware with retry logic
 function createSlackProxyWithRetry(targetUrl) {
+  const https = require('https');
+  
   const baseProxy = createProxyMiddleware({
     target: targetUrl,
     changeOrigin: true,
     secure: true,
-    // Force HTTP/1.1 since ngrok might have issues with HTTP/2 from load balancers
-    agent: new (require('https').Agent)({
-      keepAlive: false,        // Disable keep-alive to prevent connection reuse issues
-      maxSockets: 10,          // Limit concurrent connections
-      timeout: 30000,          // Socket timeout (30 seconds)
-      rejectUnauthorized: true // Verify SSL certificates
+    // Optimize for Slack's 3-second timeout requirement
+    agent: new https.Agent({
+      keepAlive: false,        // Disable keep-alive completely
+      maxSockets: 10,          // Allow more concurrent connections for speed
+      timeout: 2000,           // Very short socket timeout (2 seconds)
+      rejectUnauthorized: true, // Verify SSL certificates
+      // Force HTTP/1.1 by disabling HTTP/2
+      maxVersion: 'TLSv1.3',
+      minVersion: 'TLSv1.2'
     }),
-    // Reduce timeouts for faster retry
-    timeout: 45000,          // 45 seconds per attempt
-    proxyTimeout: 45000,     // 45 seconds per attempt
+    // Fast timeouts to meet Slack's 3-second requirement
+    timeout: 2500,           // 2.5 seconds per attempt (leave 0.5s for processing)
+    proxyTimeout: 2500,      // 2.5 seconds per attempt
     // Configure connection handling
-    followRedirects: true,
-    ws: false, // Disable websockets to prevent connection issues
+    followRedirects: false,   // Disable redirects to prevent delays
+    ws: false,               // Disable websockets
+    xfwd: false,             // Disable X-Forwarded headers that might confuse ngrok
     onProxyReq: (proxyReq, req, res) => {
-      console.log(`[PROXY_REQ] Attempt ${req.retryAttempt || 1}/3: ${targetUrl}${req.url}`);
+      console.log(`[PROXY_REQ] Fast attempt ${req.retryAttempt || 1}/2: ${targetUrl}${req.url}`);
+      
+      // Force HTTP/1.1 explicitly
+      proxyReq.setHeader('Connection', 'close');
+      proxyReq.setHeader('Cache-Control', 'no-cache');
       
       // Add ngrok bypass header for free accounts
       proxyReq.setHeader('ngrok-skip-browser-warning', 'true');
       
-      // Force HTTP/1.1 and proper connection handling
-      proxyReq.setHeader('Connection', 'close'); // Force connection close to prevent hangs
-      proxyReq.setHeader('User-Agent', req.get('User-Agent') || 'Flush-Load-Balancer/1.0');
+      // Use original User-Agent or set a clear one
+      const userAgent = req.get('User-Agent') || 'Flush-Load-Balancer/1.0';
+      proxyReq.setHeader('User-Agent', userAgent);
       
-      // Remove any existing HTTP/2 headers that might cause issues
+      // Remove any problematic headers that might cause HTTP/2 issues
       proxyReq.removeHeader('upgrade');
       proxyReq.removeHeader('http2-settings');
+      proxyReq.removeHeader(':method');
+      proxyReq.removeHeader(':path');
+      proxyReq.removeHeader(':scheme');
+      proxyReq.removeHeader(':authority');
       
       // Preserve critical Slack headers
       if (req.get('X-Slack-Signature')) {
@@ -215,14 +229,13 @@ function createSlackProxyWithRetry(targetUrl) {
         proxyReq.setHeader('X-Slack-Request-Timestamp', req.get('X-Slack-Request-Timestamp'));
       }
       
-      // Log timing for debugging
+      // Log timing and debug info
       req.startTime = Date.now();
-      console.log(`[PROXY_REQ] Headers: User-Agent="${proxyReq.getHeader('User-Agent')}", Connection="${proxyReq.getHeader('Connection')}", ngrok-skip="${proxyReq.getHeader('ngrok-skip-browser-warning')}"`);
+      console.log(`[PROXY_REQ] Headers: UA="${userAgent}", ngrok-skip="${proxyReq.getHeader('ngrok-skip-browser-warning')}"`);
     },
     onProxyRes: (proxyRes, req, res) => {
       const duration = Date.now() - (req.startTime || Date.now());
-      console.log(`[PROXY_SUCCESS] Response from ${targetUrl}: ${proxyRes.statusCode} (${duration}ms) on attempt ${req.retryAttempt || 1}`);
-      console.log(`[PROXY_SUCCESS] Response headers:`, Object.keys(proxyRes.headers));
+      console.log(`[PROXY_SUCCESS] ✅ ${proxyRes.statusCode} in ${duration}ms (attempt ${req.retryAttempt || 1})`);
       
       // Update request count
       if (req.selectedDeveloper) {
@@ -240,33 +253,33 @@ function createSlackProxyWithRetry(targetUrl) {
     onError: (err, req, res) => {
       const duration = Date.now() - (req.startTime || Date.now());
       const attempt = req.retryAttempt || 1;
-      console.error(`[PROXY_ERROR] Attempt ${attempt}/3 - ${targetUrl} - ${err.code || 'UNKNOWN'}: ${err.message} (after ${duration}ms)`);
+      console.error(`[PROXY_ERROR] ❌ Attempt ${attempt}/2 - ${err.code}: ${err.message} (${duration}ms)`);
       
-      // Check if this is a retryable error
-      const isRetryableError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'EPIPE' || err.code === 'ENOTFOUND';
+      // Check if this is a retryable error and we have time for a retry
+      const isRetryableError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'EPIPE' || err.code === 'ENOTFOUND' || err.code === 'ECONNABORTED';
+      const totalTimeElapsed = Date.now() - req.startTime;
+      const hasTimeForRetry = totalTimeElapsed < 1500; // Only retry if we have at least 1.5s left
       
-      if (isRetryableError && attempt < 3 && !res.headersSent) {
-        console.log(`[RETRY] Retrying request in 1 second... (attempt ${attempt + 1}/3)`);
+      if (isRetryableError && attempt < 2 && hasTimeForRetry && !res.headersSent) {
+        console.log(`[RETRY] 🔄 Quick retry (${totalTimeElapsed}ms elapsed, ${3000 - totalTimeElapsed}ms remaining)`);
         req.retryAttempt = attempt + 1;
         
-        // Wait 1 second before retry
-        setTimeout(() => {
-          // Create new proxy for retry
+        // Immediate retry - no delay for speed
+        setImmediate(() => {
+          console.log(`[RETRY] Starting retry attempt ${attempt + 1}`);
           const retryProxy = createSlackProxyWithRetry(targetUrl);
           retryProxy(req, res);
-        }, 1000);
+        });
         return;
       }
       
-      // Handle permanent failure or max retries reached
-      console.error(`[PROXY_ERROR] Max retries reached or non-retryable error`);
-      console.error(`[PROXY_ERROR] Error stack:`, err.stack);
-      console.error(`[PROXY_ERROR] Request URL: ${req.method} ${req.url}`);
+      // Handle permanent failure or no time left
+      const reason = !hasTimeForRetry ? 'no time remaining' : 'max retries reached';
+      console.error(`[PROXY_ERROR] ❌ Failed after ${attempt} attempts (${reason})`);
       
       // More nuanced health checking
       if (req.selectedDeveloper) {
-        // For connection resets/timeouts, only mark unhealthy after multiple failures
-        if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'EPIPE' || err.code === 'ENOTFOUND') {
+        if (isRetryableError) {
           const failureKey = `${req.selectedDeveloper}_failures`;
           global[failureKey] = (global[failureKey] || 0) + 1;
           
@@ -277,7 +290,6 @@ function createSlackProxyWithRetry(targetUrl) {
             console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy after ${global[failureKey]} connection failures`);
           }
         } else if (err.code === 'ECONNREFUSED') {
-          // Immediately mark as unhealthy for connection refused
           healthStatus[req.selectedDeveloper] = 'unhealthy';
           console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy due to ${err.code}`);
         }
@@ -285,8 +297,8 @@ function createSlackProxyWithRetry(targetUrl) {
 
       // Return appropriate error response
       if (!res.headersSent) {
-        const isTimeoutError = err.code === 'ETIMEDOUT' || duration > 30000;
-        const isConnectionError = err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE';
+        const isTimeoutError = err.code === 'ETIMEDOUT' || duration > 2000;
+        const isConnectionError = err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE' || err.code === 'ECONNABORTED';
         const statusCode = isTimeoutError ? 504 : (isConnectionError ? 502 : 500);
         const errorType = isTimeoutError ? 'Gateway Timeout' : (isConnectionError ? 'Bad Gateway' : 'Internal Server Error');
         
@@ -300,7 +312,7 @@ function createSlackProxyWithRetry(targetUrl) {
           error_code: err.code,
           error_message: err.message,
           attempts: attempt,
-          suggestion: isConnectionError ? 'Check if target URL is accessible and accepting connections' : 'Try again later'
+          slack_timeout_note: 'Optimized for Slack 3-second requirement'
         });
       }
     }
