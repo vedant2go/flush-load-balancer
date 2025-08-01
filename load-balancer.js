@@ -14,31 +14,14 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Middleware to buffer request body before proxying
-function bufferRequestBody(req, res, next) {
-  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
-    let body = '';
-    req.setEncoding('utf8');
-    
-    req.on('data', chunk => {
-      body += chunk;
-    });
-    
-    req.on('end', () => {
-      req.rawBody = body;
-      req.body = body;
-      console.log(`[BUFFER] Buffered ${body.length} bytes`);
-      next();
-    });
-    
-    req.on('error', (err) => {
-      console.error(`[BUFFER] Error reading request body:`, err);
-      res.status(400).json({ error: 'Bad request body' });
-    });
-  } else {
-    next();
+// Remove custom buffering and use Express raw body parser for Slack endpoints
+const rawBodyParser = express.raw({ 
+  type: 'application/json', 
+  limit: '10mb',
+  verify: (req, res, buf, encoding) => {
+    req.rawBody = buf;
   }
-}
+});
 
 // Load balancer strategies
 const LOAD_BALANCER_STRATEGY = process.env.LOAD_BALANCER_STRATEGY || 'round_robin';
@@ -211,11 +194,9 @@ function createSlackProxy(targetUrl) {
     proxyTimeout: 2800,     // Just under 3 seconds
     followRedirects: false,
     ws: false,
-    // Ensure body is properly forwarded
-    parseReqBody: false,    // Don't parse body, just forward it
-    buffer: true,           // Enable buffering
     onProxyReq: (proxyReq, req, res) => {
-      console.log(`[PROXY] → ${targetUrl}${req.url} (body: ${req.rawBody ? req.rawBody.length : 0} bytes)`);
+      const bodySize = req.rawBody ? req.rawBody.length : 0;
+      console.log(`[PROXY] → ${targetUrl}${req.url} (body: ${bodySize} bytes)`);
       
       // Essential headers only
       proxyReq.setHeader('ngrok-skip-browser-warning', 'true');
@@ -229,9 +210,10 @@ function createSlackProxy(targetUrl) {
         proxyReq.setHeader('X-Slack-Request-Timestamp', req.get('X-Slack-Request-Timestamp'));
       }
       
-      // Ensure Content-Length is set correctly if we have a body
+      // Write the body if we have one
       if (req.rawBody && req.rawBody.length > 0) {
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody, 'utf8'));
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', req.rawBody.length);
         proxyReq.write(req.rawBody);
       }
       
@@ -338,7 +320,7 @@ app.post('/reset-health', (req, res) => {
 });
 
 // Slack events endpoint with load balancing
-app.use('/slack/events', bufferRequestBody, (req, res, next) => {
+app.use('/slack/events', rawBodyParser, (req, res, next) => {
   const sessionId = req.headers['x-slack-signature'] || req.headers['x-forwarded-for'];
   const selectedDeveloper = selectDeveloper('slack_app', sessionId);
   
@@ -368,7 +350,7 @@ app.use('/slack/events', bufferRequestBody, (req, res, next) => {
 });
 
 // Slack interactions endpoint with load balancing
-app.use('/slack/interactions', bufferRequestBody, (req, res, next) => {
+app.use('/slack/interactions', rawBodyParser, (req, res, next) => {
   const sessionId = req.headers['x-slack-signature'] || req.headers['x-forwarded-for'];
   const selectedDeveloper = selectDeveloper('slack_app', sessionId);
   
