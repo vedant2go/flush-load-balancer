@@ -6,11 +6,11 @@
     "api/slack/interactions.js": {
       "maxDuration": 3
     },
-    "api/slack/oauth/**.js": {
-      "maxDuration": 10
+    "api/health.js": {
+      "maxDuration": 5
     },
-    "api/google-sheets/oauth/**.js": {
-      "maxDuration": 10
+    "api/load-balancer.js": {
+      "maxDuration": 5
     }
   },
   "rewrites": [
@@ -21,14 +21,6 @@
     {
       "source": "/slack/interactions", 
       "destination": "/api/slack/interactions"
-    },
-    {
-      "source": "/slack/oauth/(.*)",
-      "destination": "/api/slack/oauth/$1"
-    },
-    {
-      "source": "/google-sheets/oauth/(.*)",
-      "destination": "/api/google-sheets/oauth/$1"
     },
     {
       "source": "/health",
