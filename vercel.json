@@ -1,0 +1,42 @@
+{
+  "functions": {
+    "api/slack/events.js": {
+      "maxDuration": 3
+    },
+    "api/slack/interactions.js": {
+      "maxDuration": 3
+    },
+    "api/slack/oauth/**.js": {
+      "maxDuration": 10
+    },
+    "api/google-sheets/oauth/**.js": {
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/slack/events",
+      "destination": "/api/slack/events"
+    },
+    {
+      "source": "/slack/interactions", 
+      "destination": "/api/slack/interactions"
+    },
+    {
+      "source": "/slack/oauth/(.*)",
+      "destination": "/api/slack/oauth/$1"
+    },
+    {
+      "source": "/google-sheets/oauth/(.*)",
+      "destination": "/api/google-sheets/oauth/$1"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/load-balancer",
+      "destination": "/api/load-balancer"
+    }
+  ]
+} 
