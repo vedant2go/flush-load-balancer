@@ -180,33 +180,109 @@ function createSlackProxy(targetUrl) {
     target: targetUrl,
     changeOrigin: true,
     secure: true,
-    timeout: 30000,
-    proxyTimeout: 30000,
+    // Force HTTP/1.1 since ngrok might have issues with HTTP/2 from load balancers
+    agent: new (require('https').Agent)({
+      keepAlive: false,        // Disable keep-alive to prevent connection reuse issues
+      maxSockets: 10,          // Limit concurrent connections
+      timeout: 60000,          // Socket timeout
+      rejectUnauthorized: true // Verify SSL certificates
+    }),
+    // Increase timeouts to match mcp_client processing times
+    timeout: 360000,        // 6 minutes (longer than mcp_client 5min default)
+    proxyTimeout: 360000,   // 6 minutes
+    // Configure connection handling
+    followRedirects: true,
+    ws: false, // Disable websockets to prevent connection issues
     onProxyReq: (proxyReq, req, res) => {
-      console.log(`Load balancing to: ${targetUrl}${req.url}`);
+      console.log(`[PROXY_REQ] Load balancing to: ${targetUrl}${req.url}`);
+      
       // Add ngrok bypass header for free accounts
       proxyReq.setHeader('ngrok-skip-browser-warning', 'true');
+      
+      // Force HTTP/1.1 and proper connection handling
+      proxyReq.setHeader('Connection', 'close'); // Force connection close to prevent hangs
+      proxyReq.setHeader('User-Agent', req.get('User-Agent') || 'Flush-Load-Balancer/1.0');
+      
+      // Remove any existing HTTP/2 headers that might cause issues
+      proxyReq.removeHeader('upgrade');
+      proxyReq.removeHeader('http2-settings');
+      
+      // Preserve critical Slack headers
+      if (req.get('X-Slack-Signature')) {
+        proxyReq.setHeader('X-Slack-Signature', req.get('X-Slack-Signature'));
+      }
+      if (req.get('X-Slack-Request-Timestamp')) {
+        proxyReq.setHeader('X-Slack-Request-Timestamp', req.get('X-Slack-Request-Timestamp'));
+      }
+      
+      // Log timing for debugging
+      req.startTime = Date.now();
+      console.log(`[PROXY_REQ] Headers: User-Agent="${proxyReq.getHeader('User-Agent')}", Connection="${proxyReq.getHeader('Connection')}", ngrok-skip="${proxyReq.getHeader('ngrok-skip-browser-warning')}"`);
     },
     onProxyRes: (proxyRes, req, res) => {
-      console.log(`Response from ${targetUrl}: ${proxyRes.statusCode}`);
+      const duration = Date.now() - (req.startTime || Date.now());
+      console.log(`[PROXY_SUCCESS] Response from ${targetUrl}: ${proxyRes.statusCode} (${duration}ms)`);
+      console.log(`[PROXY_SUCCESS] Response headers:`, Object.keys(proxyRes.headers));
+      
       // Update request count
       if (req.selectedDeveloper) {
         requestCounts[req.selectedDeveloper] = (requestCounts[req.selectedDeveloper] || 0) + 1;
+        // Mark as healthy on successful response
+        healthStatus[req.selectedDeveloper] = 'healthy';
+        // Reset failure counter on success
+        const failureKey = `${req.selectedDeveloper}_failures`;
+        if (global[failureKey]) {
+          console.log(`[HEALTH_CHECK] Reset failure counter for ${req.selectedDeveloper}`);
+          global[failureKey] = 0;
+        }
       }
     },
     onError: (err, req, res) => {
-      console.error(`Proxy error for ${targetUrl}:`, err.message);
-      // Mark developer as unhealthy
+      const duration = Date.now() - (req.startTime || Date.now());
+      console.error(`[PROXY_ERROR] ${targetUrl} - ${err.code || 'UNKNOWN'}: ${err.message} (after ${duration}ms)`);
+      console.error(`[PROXY_ERROR] Error stack:`, err.stack);
+      console.error(`[PROXY_ERROR] Request URL: ${req.method} ${req.url}`);
+      console.error(`[PROXY_ERROR] Request headers:`, req.headers);
+      
+      // More nuanced health checking
       if (req.selectedDeveloper) {
-        healthStatus[req.selectedDeveloper] = 'unhealthy';
-        console.log(`Marked ${req.selectedDeveloper} as unhealthy`);
+        // For connection resets/timeouts, only mark unhealthy after multiple failures
+        if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'EPIPE' || err.code === 'ENOTFOUND') {
+          const failureKey = `${req.selectedDeveloper}_failures`;
+          global[failureKey] = (global[failureKey] || 0) + 1;
+          
+          console.log(`[HEALTH_CHECK] Connection issue with ${req.selectedDeveloper} (${global[failureKey]}/3 failures): ${err.code}`);
+          
+          if (global[failureKey] >= 3) {
+            healthStatus[req.selectedDeveloper] = 'unhealthy';
+            console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy after ${global[failureKey]} connection failures`);
+          }
+        } else if (err.code === 'ECONNREFUSED') {
+          // Immediately mark as unhealthy for connection refused
+          healthStatus[req.selectedDeveloper] = 'unhealthy';
+          console.log(`[HEALTH_CHECK] Marked ${req.selectedDeveloper} as unhealthy due to ${err.code}`);
+        }
       }
-      res.status(502).json({ 
-        error: 'Backend service unavailable',
-        developer: req.selectedDeveloper,
-        service: req.service,
-        target: targetUrl
-      });
+
+      // Return appropriate error response
+      if (!res.headersSent) {
+        const isTimeoutError = err.code === 'ETIMEDOUT' || duration > 300000;
+        const isConnectionError = err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EPIPE';
+        const statusCode = isTimeoutError ? 504 : (isConnectionError ? 502 : 500);
+        const errorType = isTimeoutError ? 'Gateway Timeout' : (isConnectionError ? 'Bad Gateway' : 'Internal Server Error');
+        
+        res.status(statusCode).json({ 
+          error: errorType,
+          message: `Backend service ${isTimeoutError ? 'timed out' : isConnectionError ? 'connection failed' : 'error'}`,
+          developer: req.selectedDeveloper,
+          service: req.service,
+          target: targetUrl,
+          duration_ms: duration,
+          error_code: err.code,
+          error_message: err.message,
+          suggestion: isConnectionError ? 'Check if target URL is accessible and accepting connections' : 'Try again later'
+        });
+      }
     }
   });
 }
