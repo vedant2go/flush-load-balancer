@@ -109,17 +109,33 @@ async function proxyRequest(req, targetUrl) {
   try {
     console.log(`[PROXY] → ${targetUrl}`);
     
+    // Build headers object, preserving all Slack headers
+    const headers = {
+      'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': 'true',
+      'Connection': 'close',
+      'User-Agent': req.headers['user-agent'] || 'Vercel-Load-Balancer/1.0'
+    };
+    
+    // Forward all Slack-related headers
+    const slackHeaders = [
+      'x-slack-signature',
+      'x-slack-request-timestamp',
+      'x-slack-retry-num',
+      'x-slack-retry-reason'
+    ];
+    
+    slackHeaders.forEach(header => {
+      if (req.headers[header]) {
+        headers[header] = req.headers[header];
+      }
+    });
+    
+    console.log(`[PROXY] Headers: ${JSON.stringify(headers)}`);
+    
     const response = await fetch(targetUrl, {
       method: req.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
-        'Connection': 'close',
-        'User-Agent': req.headers['user-agent'] || 'Vercel-Load-Balancer/1.0',
-        // Preserve Slack headers
-        ...(req.headers['x-slack-signature'] && { 'X-Slack-Signature': req.headers['x-slack-signature'] }),
-        ...(req.headers['x-slack-request-timestamp'] && { 'X-Slack-Request-Timestamp': req.headers['x-slack-request-timestamp'] })
-      },
+      headers,
       body: req.method === 'POST' ? JSON.stringify(req.body) : undefined,
       signal: AbortSignal.timeout(2800) // Slack 3-second timeout
     });
