@@ -169,7 +169,7 @@ function updateStats(developer, success = true) {
   }
 }
 
-module.exports = {
+export {
   selectDeveloper,
   getTargetUrl,
   proxyRequest,

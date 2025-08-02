@@ -1,4 +1,4 @@
-const { loadDevelopersFromEnv, requestCounts, healthStatus } = require('./_lib/load-balancer');
+import { loadDevelopersFromEnv, requestCounts, healthStatus } from './_lib/load-balancer.js';
 
 export default async function handler(req, res) {
   try {

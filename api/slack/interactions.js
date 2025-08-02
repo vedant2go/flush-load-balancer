@@ -1,4 +1,4 @@
-const { selectDeveloper, getTargetUrl, proxyRequest, updateStats } = require('../_lib/load-balancer');
+import { selectDeveloper, getTargetUrl, proxyRequest, updateStats } from '../_lib/load-balancer.js';
 
 export default async function handler(req, res) {
   // Only allow POST requests
