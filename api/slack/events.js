@@ -45,7 +45,8 @@ export default async function handler(req, res) {
     
     // Create a modified request object with raw body
     const modifiedReq = {
-      ...req,
+      method: req.method,
+      headers: req.headers,
       body: jsonBody, // For our proxy function
       rawBody: body   // For Slack signature verification
     };

@@ -108,13 +108,20 @@ async function proxyRequest(req, targetUrl) {
   
   try {
     console.log(`[PROXY] → ${targetUrl}`);
+    console.log(`[PROXY] Available headers:`, Object.keys(req.headers));
     
     // Build headers object, preserving all Slack headers
     const headers = {
       'ngrok-skip-browser-warning': 'true',
-      'Connection': 'close',
-      'User-Agent': req.headers['user-agent'] || req.headers['User-Agent'] || 'Vercel-Load-Balancer/1.0'
+      'Connection': 'close'
     };
+    
+    // Set User-Agent more safely
+    const userAgent = req.headers['user-agent'] || 
+                     req.headers['User-Agent'] || 
+                     req.headers['User-agent'] ||
+                     'Vercel-Load-Balancer/1.0';
+    headers['User-Agent'] = userAgent;
     
     // Set appropriate Content-Type based on body format
     if (req.rawBody && req.rawBody.includes('payload=')) {
@@ -184,6 +191,8 @@ async function proxyRequest(req, targetUrl) {
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error(`[PROXY] ❌ ${error.message} (${duration}ms)`);
+    console.error(`[PROXY] Error stack:`, error.stack);
+    console.error(`[PROXY] Request headers:`, req.headers);
     
     throw {
       status: error.name === 'TimeoutError' ? 504 : 502,
