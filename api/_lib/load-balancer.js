@@ -133,10 +133,26 @@ async function proxyRequest(req, targetUrl) {
     
     console.log(`[PROXY] Headers: ${JSON.stringify(headers)}`);
     
+    // Preserve the raw body for Slack signature verification
+    let body;
+    if (req.method === 'POST') {
+      // Use raw body if available (for Slack signature verification)
+      if (req.rawBody) {
+        body = req.rawBody;
+        console.log(`[PROXY] Using raw body for Slack signature verification`);
+      } else if (typeof req.body === 'string') {
+        body = req.body;
+      } else {
+        // Otherwise, stringify it (but this might break signatures)
+        body = JSON.stringify(req.body);
+        console.log(`[PROXY] ⚠️  Warning: Body was re-serialized, may break Slack signatures`);
+      }
+    }
+    
     const response = await fetch(targetUrl, {
       method: req.method,
       headers,
-      body: req.method === 'POST' ? JSON.stringify(req.body) : undefined,
+      body,
       signal: AbortSignal.timeout(2800) // Slack 3-second timeout
     });
     

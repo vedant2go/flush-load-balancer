@@ -1,5 +1,12 @@
 import { selectDeveloper, getTargetUrl, proxyRequest, updateStats } from '../_lib/load-balancer.js';
 
+// Configure for raw body handling
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 export default async function handler(req, res) {
   // Only allow POST requests
   if (req.method !== 'POST') {
@@ -7,6 +14,13 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Get raw body for Slack signature verification
+    const rawBody = await getRawBody(req);
+    const body = rawBody.toString();
+    
+    // Parse JSON for our use
+    const jsonBody = JSON.parse(body);
+    
     // Select developer using load balancing
     const selectedDeveloper = selectDeveloper('slack_app');
     
@@ -29,9 +43,16 @@ export default async function handler(req, res) {
       });
     }
     
+    // Create a modified request object with raw body
+    const modifiedReq = {
+      ...req,
+      body: jsonBody, // For our proxy function
+      rawBody: body   // For Slack signature verification
+    };
+    
     // Proxy the request
     try {
-      const result = await proxyRequest(req, `${targetUrl}/slack/interactions`);
+      const result = await proxyRequest(modifiedReq, `${targetUrl}/slack/interactions`);
       updateStats(selectedDeveloper);
       
       return res.status(result.status).json(result.data);
@@ -51,4 +72,18 @@ export default async function handler(req, res) {
       message: error.message
     });
   }
+}
+
+// Helper function to get raw body
+async function getRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      resolve(Buffer.from(data));
+    });
+    req.on('error', reject);
+  });
 } 
