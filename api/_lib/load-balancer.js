@@ -111,11 +111,19 @@ async function proxyRequest(req, targetUrl) {
     
     // Build headers object, preserving all Slack headers
     const headers = {
-      'Content-Type': 'application/json',
       'ngrok-skip-browser-warning': 'true',
       'Connection': 'close',
-      'User-Agent': req.headers['user-agent'] || 'Vercel-Load-Balancer/1.0'
+      'User-Agent': req.headers['user-agent'] || req.headers['User-Agent'] || 'Vercel-Load-Balancer/1.0'
     };
+    
+    // Set appropriate Content-Type based on body format
+    if (req.rawBody && req.rawBody.includes('payload=')) {
+      // URL-encoded form data
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    } else {
+      // JSON data
+      headers['Content-Type'] = 'application/json';
+    }
     
     // Forward all Slack-related headers
     const slackHeaders = [
@@ -143,9 +151,16 @@ async function proxyRequest(req, targetUrl) {
       } else if (typeof req.body === 'string') {
         body = req.body;
       } else {
-        // Otherwise, stringify it (but this might break signatures)
-        body = JSON.stringify(req.body);
-        console.log(`[PROXY] ⚠️  Warning: Body was re-serialized, may break Slack signatures`);
+        // For form data, reconstruct the original format
+        if (req.body && typeof req.body === 'object' && req.body.payload) {
+          // Reconstruct URL-encoded form data
+          body = `payload=${encodeURIComponent(JSON.stringify(req.body.payload))}`;
+          console.log(`[PROXY] Reconstructed form data for Slack signature verification`);
+        } else {
+          // Otherwise, stringify it (but this might break signatures)
+          body = JSON.stringify(req.body);
+          console.log(`[PROXY] ⚠️  Warning: Body was re-serialized, may break Slack signatures`);
+        }
       }
     }
     

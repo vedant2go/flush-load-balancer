@@ -52,7 +52,11 @@ export default async function handler(req, res) {
     
     // Proxy the request
     try {
-      const result = await proxyRequest(modifiedReq, `${targetUrl}/slack/events`);
+      // Ensure proper URL construction without double slashes
+      const baseUrl = targetUrl.endsWith('/') ? targetUrl.slice(0, -1) : targetUrl;
+      const fullUrl = `${baseUrl}/slack/events`;
+      
+      const result = await proxyRequest(modifiedReq, fullUrl);
       updateStats(selectedDeveloper);
       
       return res.status(result.status).json(result.data);

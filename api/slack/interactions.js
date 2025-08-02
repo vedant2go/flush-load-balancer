@@ -18,8 +18,29 @@ export default async function handler(req, res) {
     const rawBody = await getRawBody(req);
     const body = rawBody.toString();
     
-    // Parse JSON for our use
-    const jsonBody = JSON.parse(body);
+    // Handle both JSON and URL-encoded form data
+    let jsonBody;
+    try {
+      // Try to parse as JSON first
+      jsonBody = JSON.parse(body);
+    } catch (jsonError) {
+      // If JSON fails, try URL-encoded form data
+      try {
+        const urlParams = new URLSearchParams(body);
+        const payload = urlParams.get('payload');
+        if (payload) {
+          jsonBody = JSON.parse(payload);
+        } else {
+          throw new Error('No payload found in form data');
+        }
+      } catch (formError) {
+        console.error('Failed to parse body as JSON or form data:', body.substring(0, 100));
+        return res.status(400).json({
+          error: 'Invalid request body format',
+          message: 'Expected JSON or URL-encoded form data'
+        });
+      }
+    }
     
     // Select developer using load balancing
     const selectedDeveloper = selectDeveloper('slack_app');
@@ -52,7 +73,11 @@ export default async function handler(req, res) {
     
     // Proxy the request
     try {
-      const result = await proxyRequest(modifiedReq, `${targetUrl}/slack/interactions`);
+      // Ensure proper URL construction without double slashes
+      const baseUrl = targetUrl.endsWith('/') ? targetUrl.slice(0, -1) : targetUrl;
+      const fullUrl = `${baseUrl}/slack/interactions`;
+      
+      const result = await proxyRequest(modifiedReq, fullUrl);
       updateStats(selectedDeveloper);
       
       return res.status(result.status).json(result.data);
