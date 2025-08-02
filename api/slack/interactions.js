@@ -16,8 +16,8 @@ export default async function handler(req, res) {
   try {
     // Check for duplicate requests
     if (isDuplicateRequest(req)) {
-      console.log(`[INTERACTIONS] Returning cached response for duplicate request`);
-      return res.status(200).json({ message: 'OK', cached: true });
+      console.log(`[INTERACTIONS] Returning 204 for duplicate request`);
+      return res.status(204).end();
     }
     
     // Get raw body for Slack signature verification
