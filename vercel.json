@@ -1,34 +1,39 @@
 {
-  "functions": {
-    "api/slack/events.js": {
-      "maxDuration": 3
-    },
-    "api/slack/interactions.js": {
-      "maxDuration": 3
-    },
-    "api/health.js": {
-      "maxDuration": 5
-    },
-    "api/load-balancer.js": {
-      "maxDuration": 5
-    }
-  },
   "rewrites": [
     {
       "source": "/slack/events",
-      "destination": "/api/slack/events"
+      "destination": "https://67ccbee1763c.ngrok-free.app/slack/events"
     },
     {
       "source": "/slack/interactions", 
-      "destination": "/api/slack/interactions"
+      "destination": "https://67ccbee1763c.ngrok-free.app/slack/interactions"
     },
     {
-      "source": "/health",
-      "destination": "/api/health"
+      "source": "/slack/commands",
+      "destination": "https://67ccbee1763c.ngrok-free.app/slack/commands"
     },
     {
-      "source": "/load-balancer",
-      "destination": "/api/load-balancer"
+      "source": "/slack/oauth",
+      "destination": "https://67ccbee1763c.ngrok-free.app/slack/oauth"
+    },
+    {
+      "source": "/google-sheets/oauth",
+      "destination": "https://67ccbee1763c.ngrok-free.app/google-sheets/oauth"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "ngrok-skip-browser-warning",
+          "value": "true"
+        },
+        {
+          "key": "User-Agent",
+          "value": "Vercel-Proxy/1.0"
+        }
+      ]
     }
   ]
 } 
