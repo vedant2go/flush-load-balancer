@@ -3,6 +3,7 @@
 // In-memory state (resets on cold starts)
 let roundRobinIndex = 0;
 const requestCounts = {};
+const processedRequests = new Set(); // Track processed requests for idempotency
 
 // Load developers from environment variables
 function loadDevelopers() {
@@ -100,6 +101,33 @@ function updateStats(developer) {
   if (developer) {
     requestCounts[developer] = (requestCounts[developer] || 0) + 1;
   }
+}
+
+// Check if request is a duplicate (idempotency)
+function isDuplicateRequest(req) {
+  const slackSignature = req.headers['x-slack-signature'];
+  const slackTimestamp = req.headers['x-slack-request-timestamp'];
+  const retryNum = req.headers['x-slack-retry-num'] || '0';
+  
+  // Create a unique request ID
+  const requestId = `${slackSignature}-${slackTimestamp}-${retryNum}`;
+  
+  if (processedRequests.has(requestId)) {
+    console.log(`[PROXY] ⚠️  Duplicate request detected: ${requestId}`);
+    return true;
+  }
+  
+  // Add to processed set
+  processedRequests.add(requestId);
+  
+  // Clean up old entries (keep last 1000 requests)
+  if (processedRequests.size > 1000) {
+    const entries = Array.from(processedRequests);
+    processedRequests.clear();
+    entries.slice(-500).forEach(id => processedRequests.add(id));
+  }
+  
+  return false;
 }
 
 // Proxy request to target
@@ -225,5 +253,6 @@ export {
   proxyRequest,
   updateStats,
   loadDevelopers,
-  requestCounts
+  requestCounts,
+  isDuplicateRequest
 }; 

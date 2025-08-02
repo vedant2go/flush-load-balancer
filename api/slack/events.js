@@ -1,4 +1,4 @@
-import { selectDeveloper, getTargetUrl, proxyRequest, updateStats } from '../_lib/load-balancer.js';
+import { selectDeveloper, getTargetUrl, proxyRequest, updateStats, isDuplicateRequest } from '../_lib/load-balancer.js';
 
 // Configure for raw body handling
 export const config = {
@@ -14,6 +14,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Check for duplicate requests
+    if (isDuplicateRequest(req)) {
+      console.log(`[EVENTS] Returning cached response for duplicate request`);
+      return res.status(200).json({ message: 'OK', cached: true });
+    }
+    
     // Get raw body for Slack signature verification
     const rawBody = await getRawBody(req);
     const body = rawBody.toString();
