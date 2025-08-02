@@ -181,7 +181,23 @@ async function proxyRequest(req, targetUrl) {
     const duration = Date.now() - startTime;
     console.log(`[PROXY] ✅ ${response.status} in ${duration}ms`);
     
-    const responseData = await response.json();
+    let responseData;
+    const contentType = response.headers.get('content-type') || '';
+    
+    if (contentType.includes('application/json')) {
+      try {
+        responseData = await response.json();
+      } catch (jsonError) {
+        console.log(`[PROXY] JSON parse error: ${jsonError.message}`);
+        responseData = { error: 'Invalid JSON response' };
+      }
+    } else {
+      // Handle plain text responses (like "OK")
+      const textResponse = await response.text();
+      console.log(`[PROXY] Plain text response: ${textResponse}`);
+      responseData = { message: textResponse, status: response.status };
+    }
+    
     return {
       status: response.status,
       data: responseData,
