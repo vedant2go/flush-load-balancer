@@ -1,24 +1,20 @@
 {
+  "functions": {
+    "api/slack/events.js": {
+      "maxDuration": 3
+    },
+    "api/slack/interactions.js": {
+      "maxDuration": 3
+    }
+  },
   "rewrites": [
     {
       "source": "/slack/events",
-      "destination": "https://67ccbee1763c.ngrok-free.app/slack/events"
+      "destination": "/api/slack/events"
     },
     {
       "source": "/slack/interactions", 
-      "destination": "https://67ccbee1763c.ngrok-free.app/slack/interactions"
-    },
-    {
-      "source": "/slack/commands",
-      "destination": "https://67ccbee1763c.ngrok-free.app/slack/commands"
-    },
-    {
-      "source": "/slack/oauth",
-      "destination": "https://67ccbee1763c.ngrok-free.app/slack/oauth"
-    },
-    {
-      "source": "/google-sheets/oauth",
-      "destination": "https://67ccbee1763c.ngrok-free.app/google-sheets/oauth"
+      "destination": "/api/slack/interactions"
     }
   ],
   "headers": [
